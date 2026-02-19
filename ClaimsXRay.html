@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Entra ClaimsXray Clone - HTML + MSAL.js</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- MSAL Browser -->
+   
+  <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js" integrity="sha384-+zq9l4uQyq7g1xZpZlq1d0pZbJ0u6q7p3p5pXq3v3q9pZbJ0u6q7p3p5pXq3v3q" crossorigin="anonymous"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 1rem 1.5rem 3rem;
+      background: #f5f5f7;
+      color: #222;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    button {
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button.primary {
+      background: #0078d4;
+      color: #fff;
+      border-color: #0078d4;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    .status {
+      margin: 0.5rem 0 1rem;
+      font-size: 0.9rem;
+      color: #444;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: #fff;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      padding: 0.75rem 0.9rem;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .card h2 {
+      margin-top: 0;
+      font-size: 1rem;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 0.4rem;
+      margin-bottom: 0.5rem;
+    }
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      font-family: "Consolas", "SF Mono", Menlo, monospace;
+      font-size: 0.8rem;
+      padding: 0.4rem;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: "Consolas", "SF Mono", Menlo, monospace;
+      font-size: 0.8rem;
+    }
+    .claims-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .claims-table th,
+    .claims-table td {
+      border: 1px solid #eee;
+      padding: 0.25rem 0.4rem;
+      vertical-align: top;
+    }
+    .claims-table th {
+      background: #fafafa;
+      text-align: left;
+      width: 30%;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      background: #e5f1fb;
+      color: #005a9e;
+      font-size: 0.7rem;
+      margin-left: 0.3rem;
+    }
+    .scopes-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.3rem 0.4rem;
+      font-size: 0.8rem;
+      margin-bottom: 0.4rem;
+    }
+    .small {
+      font-size: 0.75rem;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <h1>Entra ClaimsXray Clone</h1>
+  <p class="small">
+    Sign in, request tokens, and inspect raw JWT + decoded claims. Update config in the script section.
+  </p>
+
+  <div class="toolbar">
+    <button id="btnLogin" class="primary">Sign in</button>
+    <button id="btnLogout">Sign out</button>
+    <button id="btnGetIdToken">Get ID token</button>
+    <button id="btnGetAccessToken">Get access token</button>
+  </div>
+
+  <div class="status" id="status">Not signed in.</div>
+
+  <div class="card" style="margin-bottom: 1rem;">
+    <h2>Configuration</h2>
+    <div class="small">
+      Edit <code>msalConfig</code> and <code>tokenRequest</code> in the script below to match your app registration.
+    </div>
+    <div style="margin-top:0.5rem;">
+      <strong>Scopes (space-separated):</strong><br />
+      <input id="scopesInput" class="scopes-input" type="text" value="openid profile email offline_access" />
+      <span class="small">Example: <code>api://YOUR-API-CLIENT-ID/.default</code> or Graph scopes.</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>ID token <span class="badge">id_token</span></h2>
+      <textarea id="idTokenRaw" placeholder="Raw ID token will appear here" readonly></textarea>
+      <h3 style="font-size:0.9rem;margin-top:0.6rem;">Decoded claims</h3>
+      <table class="claims-table" id="idTokenClaimsTable">
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Access token <span class="badge">access_token</span></h2>
+      <textarea id="accessTokenRaw" placeholder="Raw access token will appear here" readonly></textarea>
+      <h3 style="font-size:0.9rem;margin-top:0.6rem;">Decoded claims</h3>
+      <table class="claims-table" id="accessTokenClaimsTable">
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // ============================
+    // 1. MSAL configuration
+    // ============================
+    const msalConfig = {
+      auth: {
+        clientId: "YOUR_CLIENT_ID_HERE",
+        authority: "https://login.microsoftonline.com/YOUR_TENANT_ID_OR_COMMON",
+        redirectUri: "http://localhost" // must match your SPA redirect URI
+      },
+      cache: {
+        cacheLocation: "sessionStorage",
+        storeAuthStateInCookie: false
+      }
+    };
+
+    const msalInstance = new msal.PublicClientApplication(msalConfig);
+
+    // Default token request; scopes can be overridden by the input box
+    let tokenRequest = {
+      scopes: ["openid", "profile", "email", "offline_access"]
+    };
+
+    // ============================
+    // 2. Helpers
+    // ============================
+
+    function setStatus(message) {
+      document.getElementById("status").innerText = message;
+    }
+
+    function base64UrlDecode(input) {
+      input = input.replace(/-/g, "+").replace(/_/g, "/");
+      const pad = input.length % 4;
+      if (pad) {
+        input += "=".repeat(4 - pad);
+      }
+      const decoded = atob(input);
+      try {
+        return decodeURIComponent(
+          decoded
+            .split("")
+            .map(function (c) {
+              return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+            })
+            .join("")
+        );
+      } catch (e) {
+        return decoded;
+      }
+    }
+
+    function decodeJwt(token) {
+      if (!token) return null;
+      const parts = token.split(".");
+      if (parts.length !== 3) return null;
+      const payload = parts[1];
+      const json = base64UrlDecode(payload);
+      try {
+        return JSON.parse(json);
+      } catch (e) {
+        console.error("Failed to parse JWT payload", e);
+        return null;
+      }
+    }
+
+    function renderClaims(tableBodyId, claims) {
+      const tbody = document.getElementById(tableBodyId);
+      tbody.innerHTML = "";
+      if (!claims) return;
+      Object.keys(claims).forEach((key) => {
+        const tr = document.createElement("tr");
+        const tdKey = document.createElement("th");
+        const tdValue = document.createElement("td");
+        tdKey.textContent = key;
+
+        let value = claims[key];
+        if (typeof value === "object") {
+          value = JSON.stringify(value, null, 2);
+        }
+        tdValue.textContent = value;
+        tr.appendChild(tdKey);
+        tr.appendChild(tdValue);
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateScopesFromInput() {
+      const scopesText = document.getElementById("scopesInput").value.trim();
+      if (scopesText) {
+        tokenRequest.scopes = scopesText.split(/\s+/);
+      }
+    }
+
+    function getActiveAccount() {
+      const accounts = msalInstance.getAllAccounts();
+      if (accounts.length > 0) {
+        return accounts[0];
+      }
+      return null;
+    }
+
+    // ============================
+    // 3. Auth flow
+    // ============================
+
+    async function signIn() {
+      try {
+        const loginResponse = await msalInstance.loginPopup({
+          scopes: ["openid", "profile", "email"]
+        });
+        msalInstance.setActiveAccount(loginResponse.account);
+        setStatus(`Signed in as ${loginResponse.account.username}`);
+      } catch (err) {
+        console.error(err);
+        setStatus("Sign-in failed: " + (err.message || err));
+      }
+    }
+
+    async function signOut() {
+      const account = getActiveAccount();
+      if (!account) {
+        setStatus("No active account to sign out.");
+        return;
+      }
+      try {
+        await msalInstance.logoutPopup({
+          account: account
+        });
+        setStatus("Signed out.");
+        document.getElementById("idTokenRaw").value = "";
+        document.getElementById("accessTokenRaw").value = "";
+        renderClaims("idTokenClaimsTable", null);
+        renderClaims("accessTokenClaimsTable", null);
+      } catch (err) {
+        console.error(err);
+        setStatus("Sign-out failed: " + (err.message || err));
+      }
+    }
+
+    async function getIdToken() {
+      const account = getActiveAccount();
+      if (!account) {
+        setStatus("No active account. Please sign in first.");
+        return;
+      }
+      try {
+        // ID token is returned as part of acquireTokenSilent as well
+        updateScopesFromInput();
+        const response = await msalInstance.acquireTokenSilent({
+          ...tokenRequest,
+          account
+        });
+        const idToken = response.idToken;
+        document.getElementById("idTokenRaw").value = idToken;
+        const claims = decodeJwt(idToken);
+        renderClaims("idTokenClaimsTable", claims);
+        setStatus("ID token acquired.");
+      } catch (err) {
+        console.warn("Silent ID token failed, trying popup", err);
+        try {
+          updateScopesFromInput();
+          const response = await msalInstance.acquireTokenPopup(tokenRequest);
+          const idToken = response.idToken;
+          document.getElementById("idTokenRaw").value = idToken;
+          const claims = decodeJwt(idToken);
+          renderClaims("idTokenClaimsTable", claims);
+          setStatus("ID token acquired via popup.");
+        } catch (err2) {
+          console.error(err2);
+          setStatus("Failed to acquire ID token: " + (err2.message || err2));
+        }
+      }
+    }
+
+    async function getAccessToken() {
+      const account = getActiveAccount();
+      if (!account) {
+        setStatus("No active account. Please sign in first.");
+        return;
+      }
+      try {
+        updateScopesFromInput();
+        const response = await msalInstance.acquireTokenSilent({
+          ...tokenRequest,
+          account
+        });
+        const accessToken = response.accessToken;
+        document.getElementById("accessTokenRaw").value = accessToken;
+        const claims = decodeJwt(accessToken);
+        renderClaims("accessTokenClaimsTable", claims);
+        setStatus("Access token acquired.");
+      } catch (err) {
+        console.warn("Silent access token failed, trying popup", err);
+        try {
+          updateScopesFromInput();
+          const response = await msalInstance.acquireTokenPopup(tokenRequest);
+          const accessToken = response.accessToken;
+          document.getElementById("accessTokenRaw").value = accessToken;
+          const claims = decodeJwt(accessToken);
+          renderClaims("accessTokenClaimsTable", claims);
+          setStatus("Access token acquired via popup.");
+        } catch (err2) {
+          console.error(err2);
+          setStatus("Failed to acquire access token: " + (err2.message || err2));
+        }
+      }
+    }
+
+    // ============================
+    // 4. Event wiring + redirect handling
+    // ============================
+
+    document.getElementById("btnLogin").addEventListener("click", signIn);
+    document.getElementById("btnLogout").addEventListener("click", signOut);
+    document.getElementById("btnGetIdToken").addEventListener("click", getIdToken);
+    document.getElementById("btnGetAccessToken").addEventListener("click", getAccessToken);
+
+    // Handle redirect (if you ever switch to redirect flow)
+    msalInstance.handleRedirectPromise().then((response) => {
+      const account = getActiveAccount();
+      if (account) {
+        setStatus(`Signed in as ${account.username}`);
+      }
+    }).catch((error) => {
+      console.error(error);
+    });
+  </script>
+</body>
+</html>
