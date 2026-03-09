@@ -142,6 +142,19 @@
       Edit <code>msalConfig</code> and <code>tokenRequest</code> in the script below to match your app registration.
     </div>
     <div style="margin-top:0.5rem;">
+      <strong>Client ID:</strong><br />
+      <input id="clientIdInput" class="scopes-input" type="text" value="4a94dd38-135d-4d5f-a361-b3468e7f74b2" />
+    </div>
+    <div style="margin-top:0.3rem;">
+      <strong>Tenant ID:</strong><br />
+      <input id="tenantIdInput" class="scopes-input" type="text" value="c1916dae-ad4b-48eb-b565-b03036c03a3b" />
+    </div>
+    <div style="margin-top:0.3rem;">
+      <strong>Redirect URI:</strong><br />
+      <input id="redirectUriInput" class="scopes-input" type="text" value="http://localhost:5500" />
+      <span class="small">These values are applied when you click <strong>Sign in</strong>.</span>
+    </div>
+    <div style="margin-top:0.5rem;">
       <strong>Scopes (space-separated):</strong><br />
       <input id="scopesInput" class="scopes-input" type="text" value="openid profile email offline_access" />
       <span class="small">Example: <code>api://YOUR-API-CLIENT-ID/.default</code> or Graph scopes.</span>
@@ -172,19 +185,45 @@
     // ============================
     // 1. MSAL configuration
     // ============================
-    const msalConfig = {
-      auth: {
-        clientId: "4a94dd38-135d-4d5f-a361-b3468e7f74b2",
-        authority: "https://login.microsoftonline.com/c1916dae-ad4b-48eb-b565-b03036c03a3b",
-        redirectUri: "http://localhost:5500" // must match your SPA redirect URI
-      },
-      cache: {
-        cacheLocation: "sessionStorage",
-        storeAuthStateInCookie: false
-      }
-    };
+    let msalInstance = null;
+    let currentMsalConfigSignature = "";
 
-    const msalInstance = new msal.PublicClientApplication(msalConfig);
+    function getAuthSettingsFromInput() {
+      const clientId = document.getElementById("clientIdInput").value.trim();
+      const tenantId = document.getElementById("tenantIdInput").value.trim();
+      const redirectUriInput = document.getElementById("redirectUriInput").value.trim();
+
+      if (!clientId) {
+        throw new Error("Client ID is required.");
+      }
+      if (!tenantId) {
+        throw new Error("Tenant ID is required.");
+      }
+
+      return {
+        clientId,
+        authority: `https://login.microsoftonline.com/${tenantId}`,
+        redirectUri: redirectUriInput || window.location.origin
+      };
+    }
+
+    function ensureMsalInstance() {
+      const auth = getAuthSettingsFromInput();
+      const signature = `${auth.clientId}|${auth.authority}|${auth.redirectUri}`;
+
+      if (!msalInstance || signature !== currentMsalConfigSignature) {
+        msalInstance = new msal.PublicClientApplication({
+          auth,
+          cache: {
+            cacheLocation: "sessionStorage",
+            storeAuthStateInCookie: false
+          }
+        });
+        currentMsalConfigSignature = signature;
+      }
+
+      return msalInstance;
+    }
 
     // Default token request; scopes can be overridden by the input box
     let tokenRequest = {
@@ -262,8 +301,11 @@
       }
     }
 
-    function getActiveAccount() {
-      const accounts = msalInstance.getAllAccounts();
+    function getActiveAccount(instance = msalInstance) {
+      if (!instance) {
+        return null;
+      }
+      const accounts = instance.getAllAccounts();
       if (accounts.length > 0) {
         return accounts[0];
       }
@@ -276,10 +318,11 @@
 
     async function signIn() {
       try {
-        const loginResponse = await msalInstance.loginPopup({
+        const instance = ensureMsalInstance();
+        const loginResponse = await instance.loginPopup({
           scopes: ["openid", "profile", "email"]
         });
-        msalInstance.setActiveAccount(loginResponse.account);
+        instance.setActiveAccount(loginResponse.account);
         setStatus(`Signed in as ${loginResponse.account.username}`);
       } catch (err) {
         console.error(err);
@@ -288,13 +331,14 @@
     }
 
     async function signOut() {
-      const account = getActiveAccount();
+      const instance = msalInstance;
+      const account = getActiveAccount(instance);
       if (!account) {
         setStatus("No active account to sign out.");
         return;
       }
       try {
-        await msalInstance.logoutPopup({
+        await instance.logoutPopup({
           account: account
         });
         setStatus("Signed out.");
@@ -309,15 +353,16 @@
     }
 
     async function getIdToken() {
-      const account = getActiveAccount();
-      if (!account) {
-        setStatus("No active account. Please sign in first.");
-        return;
-      }
       try {
+        const instance = ensureMsalInstance();
+        const account = getActiveAccount(instance);
+        if (!account) {
+          setStatus("No active account. Please sign in first.");
+          return;
+        }
         // ID token is returned as part of acquireTokenSilent as well
         updateScopesFromInput();
-        const response = await msalInstance.acquireTokenSilent({
+        const response = await instance.acquireTokenSilent({
           ...tokenRequest,
           account
         });
@@ -330,7 +375,8 @@
         console.warn("Silent ID token failed, trying popup", err);
         try {
           updateScopesFromInput();
-          const response = await msalInstance.acquireTokenPopup(tokenRequest);
+          const instance = ensureMsalInstance();
+          const response = await instance.acquireTokenPopup(tokenRequest);
           const idToken = response.idToken;
           document.getElementById("idTokenRaw").value = idToken;
           const claims = decodeJwt(idToken);
@@ -344,14 +390,15 @@
     }
 
     async function getAccessToken() {
-      const account = getActiveAccount();
-      if (!account) {
-        setStatus("No active account. Please sign in first.");
-        return;
-      }
       try {
+        const instance = ensureMsalInstance();
+        const account = getActiveAccount(instance);
+        if (!account) {
+          setStatus("No active account. Please sign in first.");
+          return;
+        }
         updateScopesFromInput();
-        const response = await msalInstance.acquireTokenSilent({
+        const response = await instance.acquireTokenSilent({
           ...tokenRequest,
           account
         });
@@ -364,7 +411,8 @@
         console.warn("Silent access token failed, trying popup", err);
         try {
           updateScopesFromInput();
-          const response = await msalInstance.acquireTokenPopup(tokenRequest);
+          const instance = ensureMsalInstance();
+          const response = await instance.acquireTokenPopup(tokenRequest);
           const accessToken = response.accessToken;
           document.getElementById("accessTokenRaw").value = accessToken;
           const claims = decodeJwt(accessToken);
@@ -387,14 +435,20 @@
     document.getElementById("btnGetAccessToken").addEventListener("click", getAccessToken);
 
     // Handle redirect (if you ever switch to redirect flow)
-    msalInstance.handleRedirectPromise().then((response) => {
-      const account = getActiveAccount();
-      if (account) {
-        setStatus(`Signed in as ${account.username}`);
-      }
-    }).catch((error) => {
+    try {
+      const instance = ensureMsalInstance();
+      instance.handleRedirectPromise().then(() => {
+        const account = getActiveAccount(instance);
+        if (account) {
+          setStatus(`Signed in as ${account.username}`);
+        }
+      }).catch((error) => {
+        console.error(error);
+      });
+    } catch (error) {
       console.error(error);
-    });
+      setStatus("Configuration error: " + (error.message || error));
+    }
   </script>
 </body>
 </html>
